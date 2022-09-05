@@ -1,7 +1,7 @@
 - Azure python examples
- - list
-   - azure app config sample : azure_config.py
-   - azure resource management sample : azure_resource_management.py
+  - list
+    - azure app config sample : azure_config.py
+    - azure resource management sample : azure_resource_management.py
 
 - example of local_env.yaml 
 ```
