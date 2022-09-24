@@ -13,6 +13,9 @@ from azure.mgmt.storage import StorageManagementClient
 from azure.identity import ClientSecretCredential
 from azure.storage.common import TokenCredential
 from msrestazure.azure_active_directory import ServicePrincipalCredentials
+from azure.mgmt.authorization import AuthorizationManagementClient
+from azure.graphrbac import GraphRbacManagementClient
+from msgraph.core import APIVersion, GraphClient
 
 
 class CredentialType(Enum):
@@ -26,6 +29,7 @@ class ExecuteCmd(Enum):
     get_resources = "get_resources"
     get_keyvault_cert_exp = "get_keyvault_cert_exp"
     get_storage_account_key = "get_storage_account_key"
+    get_aks_cre_exp = "get_aks_cre_exp"
 
 
 class AzureResourceType(Enum):
@@ -54,7 +58,7 @@ class AzureCredential:
                         client_id=client_id,
                         secret=app_secret,
                         tenant=tenant_id,
-                        resource='https://vault.azure.net'
+                        resource=resource_url
                     )
                 else:
                     return ServicePrincipalCredentials(
@@ -94,9 +98,25 @@ class AzureClient:
         return None
 
     @staticmethod
+    def get_rbac_client(credential, tenant_id: str) -> GraphRbacManagementClient:
+        try:
+            return GraphRbacManagementClient(credentials=credential, tenant_id=tenant_id)
+        except Exception as e:
+            logger.error(f'Exception : {__name__}.AzureClient.get_rbac_client\n{e}')
+        return None
+
+    @staticmethod
+    def get_auth_client(credential, subscription_id: str) -> AuthorizationManagementClient:
+        try:
+            return AuthorizationManagementClient(credential, subscription_id)
+        except Exception as e:
+            logger.error(f'Exception : {__name__}.AzureClient.get_auth_client\n{e}')
+        return None
+
+    @staticmethod
     def get_kvm_client(credential, subscription_id: str) -> KeyVaultManagementClient:
         try:
-            return KeyVaultManagementClient(credentials=credential, subscription_id=subscription_id)
+            return KeyVaultManagementClient(credential=credential, subscription_id=subscription_id)
         except Exception as e:
             logger.error(f'Exception : {__name__}.AzureClient.get_kvm_client\n\t{e}')
         return None
@@ -112,11 +132,15 @@ class AzureClient:
 
 class CertUtil:
     @staticmethod
-    def get_ssl_cert_exp_date(url: str) -> datetime:
+    def get_ssl_cert_exp_date(url: str, certficate: str = None, type: str = "PEM") -> datetime:
         try:
-            cert = ssl.get_server_certificate((url, 443))
+            if certficate is not None:
+                cert = certficate
+            else:
+                cert = ssl.get_server_certificate((url, 443))
             if cert is not None:
-                x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+                enc_type = OpenSSL.crypto.FILETYPE_PEM if type == "PEM" else OpenSSL.crypto.FILETYPE_ASN1
+                x509 = OpenSSL.crypto.load_certificate(enc_type, cert)
                 if x509 is not None:
                     return datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
         except Exception as e:
@@ -142,7 +166,8 @@ class ClientBase:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._client is not None:
-            self._client.close()
+            if self._client.__class__.__name__ not in ["GraphRbacManagementClient", "GraphClient"]:
+                self._client.close()
             self._client = None
 
 
@@ -168,7 +193,7 @@ class ResourceManagerClient(ClientBase):
 
 class KeyVaultManagerClient(ClientBase):
     def __enter__(self) -> KeyVaultManagementClient:
-        self._credential = AzureCredential.get_credential(cre_type=CredentialType.Principal, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret)
+        self._credential = AzureCredential.get_credential(cre_type=CredentialType.ClientSecret, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret)
         if self._credential is not None:
             self._client = AzureClient.get_kvm_client(credential=self._credential, subscription_id=self._subscription_id)
             return self._client
@@ -191,9 +216,43 @@ class CertClient(ClientBase):
 
 class AzureContainerClient(ClientBase):
     def __enter__(self) -> ContainerServiceClient:
-        self._credential = AzureCredential.get_credential(cre_type=CredentialType.Principal, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret)
+        self._credential = AzureCredential.get_credential(cre_type=CredentialType.ClientSecret, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret)
         if self._credential is not None:
             self._client: ContainerServiceClient = AzureClient.get_cs_client(self._credential, subscription_id=self._subscription_id)
+            return self._client
+        else:
+            return None
+
+
+class AuthorityClient(ClientBase):
+    def __enter__(self) -> AuthorizationManagementClient:
+        self._credential = TokenCredential()
+        # self._credential = AzureCredential.(cre_type=CredentialType.Principal, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret)
+
+        if self._credential is not None:
+            self._client: AuthorizationManagementClient = AzureClient.get_auth_client(self._credential, subscription_id=self._subscription_id)
+            return self._client
+        else:
+            print('credential is none')
+            return None
+
+
+class AzureGraphRBACClient(ClientBase):
+    def __enter__(self) -> GraphRbacManagementClient:
+        resource_url = "https://graph.windows.net"
+        self._credential = AzureCredential.get_credential(cre_type=CredentialType.ClientSecret, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret, resource_url=resource_url)
+        if self._credential is not None:
+            self._client: GraphRbacManagementClient = AzureClient.get_rbac_client(self._credential, tenant_id=self._tenant_id)
+            return self._client
+        else:
+            return None
+
+
+class AzureCliGraphClient(ClientBase):
+    def __enter__(self) -> GraphClient:
+        self._credential = AzureCredential.get_credential(cre_type=CredentialType.ClientSecret, client_id=self._client_id, tenant_id=self._tenant_id, app_secret=self._app_secret)
+        if self._credential is not None:
+            self._client = GraphClient(credential=self._credential, api_version=APIVersion.beta)
             return self._client
         else:
             return None

@@ -1,7 +1,7 @@
 from configs import AzureConfig
 from lib.config_util import read_local_env
 from lib.azure_core import ExecuteCmd, AzureResourceType
-from lib.azure_service import AzureClusterCertExpService, ResourceListService, KeyValutCertExpService, SMAccountKeyService
+from lib.azure_service import AzureClusterCertExpService, ResourceListService, KeyValutCertExpService, SMAccountKeyService, AzureAKSSPCredExpService
 
 
 def parse_args() -> (ExecuteCmd, AzureResourceType):
@@ -20,7 +20,8 @@ def parse_args() -> (ExecuteCmd, AzureResourceType):
 execution_funcs = {ExecuteCmd.get_cluster_cert_exp: AzureClusterCertExpService,
                    ExecuteCmd.get_resources: ResourceListService,
                    ExecuteCmd.get_keyvault_cert_exp: KeyValutCertExpService,
-                   ExecuteCmd.get_storage_account_key: SMAccountKeyService, }
+                   ExecuteCmd.get_storage_account_key: SMAccountKeyService,
+                   ExecuteCmd.get_aks_cre_exp: AzureAKSSPCredExpService}
 
 
 def main():
